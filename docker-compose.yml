@@ -58,8 +58,10 @@
       - "8888:8888"
     environment:
       JUPYTER_ENABLE_LAB: yes
+      JUPYTER_TOKEN: "xxx"
     volumes:
       - ./notebooks:/home/jovyan/work
+      - d:/docs:/data                    # ← D:\docs mounted as /data
     depends_on:
       - spark-worker
 
