@@ -1,0 +1,15 @@
+Pycharm console
+http://localhost:8888/
+
+
+1. Lokální soubory → RAW (ingest_to_minio.py)
+Vezme CSV soubory z D:\docs, načte je přes Spark a uloží do MinIO jako oddělené složky raw/csv/orders/, raw/csv/customers/, raw/csv/products/. TXT soubory jdou rovnou přes boto3 bez Sparku.
+
+2. RAW → Silver (etl_pipeline.py)
+Načte surová CSV a udělá z nich kvalitní Parquet data — opraví typy sloupců (string → integer, datum, double), odstraní duplicity a prázdné řádky, přidá auditní sloupce. Orders jsou navíc particionovány podle roku a měsíce, což zrychluje pozdější dotazy.
+
+3. Silver → Gold (etl_pipeline.py)
+Joinuje všechny tři tabulky dohromady a vytvoří čtyři analytické pohledy — tržby podle kategorie, top zákazníci, měsíční trend a kompletní detail objednávek. Tohle jsou data připravená pro reporting.
+
+4. Gold → Dotazy (query_gold.py)
+Načte gold Parquet jako SQL views a umožňuje psát libovolné spark.sql() dotazy — od jednoduchých agregací po window funkce jako kumulativní součty nebo ranking.

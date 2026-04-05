@@ -38,6 +38,13 @@ MINIO_BUCKET     = "datalake"
 
 LOCAL_DATA_DIR   = "/data"   # bind-mounted D:\docs inside the container
 
+# Verze JAR balíčků pro S3A connector.
+# Musí odpovídat verzi Hadoop ve tvém Spark image.
+# Jak zjistit verzi: spark.sparkContext._jvm.org.apache.hadoop.util.VersionInfo.getVersion()
+# Spark 3.3 / 3.4 / 3.5  →  hadoop-aws:3.3.4  +  aws-java-sdk-bundle:1.12.367
+HADOOP_AWS_VERSION    = "3.3.4"
+AWS_SDK_VERSION       = "1.12.367"
+
 # ── Sanity check ──────────────────────────────────────────────────────────────
 
 if not os.path.exists(LOCAL_DATA_DIR):
@@ -75,7 +82,13 @@ def get_spark() -> SparkSession:
     return (
         SparkSession.builder
         .appName("ingest_to_minio")
-        .config("spark.hadoop.fs.s3a.impl",              "org.apache.hadoop.fs.s3a.S3AFileSystem")
+        # Stáhne hadoop-aws + AWS SDK z Maven Central při prvním spuštění.
+        # Při dalším spuštění jsou JARy cached (~/.ivy2/).
+        .config("spark.jars.packages",
+                f"org.apache.hadoop:hadoop-aws:{HADOOP_AWS_VERSION},"
+                f"com.amazonaws:aws-java-sdk-bundle:{AWS_SDK_VERSION}")
+        .config("spark.hadoop.fs.s3a.impl",
+                "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.hadoop.fs.s3a.endpoint",          MINIO_ENDPOINT)
         .config("spark.hadoop.fs.s3a.access.key",        MINIO_ACCESS_KEY)
         .config("spark.hadoop.fs.s3a.secret.key",        MINIO_SECRET_KEY)
@@ -105,12 +118,17 @@ def upload_txt(filename: str) -> None:
 
 
 def ingest_csv(paths: list) -> None:
-    print(f"\n[CSV] Reading {len(paths)} file(s) → {s3a('raw/csv')}")
-    df = spark.read.option("header", True).option("inferSchema", True).csv(paths)
-    df.printSchema()
-    print(f"[CSV] Row count: {df.count()}")
-    df.write.mode("overwrite").option("header", True).csv(s3a("raw/csv"))
-    print(f"[CSV] ✓ Written to {s3a('raw/csv')}")
+    # Každý soubor jde do vlastní podsložky raw/csv/<název_bez_přípony>/
+    # aby ETL pipeline mohla číst tabulky samostatně.
+    for local_path in paths:
+        stem   = os.path.splitext(os.path.basename(local_path))[0]  # "orders.csv" → "orders"
+        target = s3a(f"raw/csv/{stem}")
+        print(f"\n[CSV] {os.path.basename(local_path)} → {target}")
+        df = spark.read.option("header", True).option("inferSchema", True).csv(local_path)
+        df.printSchema()
+        print(f"[CSV] Row count: {df.count()}")
+        df.write.mode("overwrite").option("header", True).csv(target)
+        print(f"[CSV] ✓ Written to {target}")
 
 
 def ingest_json(paths: list) -> None:
@@ -180,7 +198,7 @@ if txt_fail:
     print(f"  TXT failures    : {len(txt_fail)} — {txt_fail}")
 print(f"  MinIO bucket    : {MINIO_BUCKET}")
 print(f"  Targets:")
-if csv_files:     print(f"    CSV     → {s3a('raw/csv')}")
+if csv_files:     print(f"    CSV     → {s3a('raw/csv/<název_souboru>/')} (každý soubor zvlášť)")
 if json_files:    print(f"    JSON    → {s3a('raw/json')}")
 if parquet_files: print(f"    Parquet → {s3a('raw/parquet')}")
 if txt_files:     print(f"    TXT     → s3://{MINIO_BUCKET}/raw/txt/  (přímý upload)")
